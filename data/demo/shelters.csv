@@ -1,0 +1,5 @@
+shelter_id,name,latitude,longitude,total_capacity,current_occupancy,freshwater_liters_day,road_width_m,safety_score
+S001,Guwahati Medical College Centre,26.1585,91.7712,3500,500,70000,12.0,98
+S002,Saradakanta Community Hall,26.1821,91.751,1500,300,25000,7.5,92
+S003,IIT Guwahati Disaster Relief Camp,26.1912,91.6925,5000,600,100000,14.0,99
+S004,Kamrup District Sports Complex,26.138,91.795,2200,400,35000,9.0,94
