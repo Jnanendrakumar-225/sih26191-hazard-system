@@ -1,44 +1,36 @@
-import numpy as np
 import pandas as pd
+import numpy as np
+from src.carrying_capacity import evaluate_ecological_limits
 
-def calculate_ahp_risk(df, weights):
-    """
-    Computes multi-hazard risk scores using Analytical Hierarchy Process (AHP) weights 
-    and multi-criteria spatial factors.
-    """
-    total_w = sum(weights.values())
-    if total_w == 0:
-        normalized_w = {k: 0.25 for k in weights}
-    else:
-        normalized_w = {k: val / total_w for k, val in weights.items()}
+def haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    dlat = np.radians(lat2 - lat1)
+    dlon = np.radians(lon2 - lon1)
+    a = np.sin(dlat / 2.0)**2 + np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.sin(dlon / 2.0)**2
+    return R * (2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a)))
+
+def find_optimal_safe_zone(hab_row: pd.Series, shelters_df: pd.DataFrame) -> dict:
+    shelters = shelters_df.copy()
+    shelters['distance_km'] = haversine_distance(
+        hab_row['latitude'], hab_row['longitude'],
+        shelters['latitude'], shelters['longitude']
+    ).round(2)
     
-    # Extract criteria vectors (normalized 0-1 scale)
-    hazard_factor = df['hazard_score'] / 100.0
-    exposure_factor = df['population'] / df['population'].max()
-    vulnerability_factor = (df['children_population'] + df['elderly_population']) / df['population']
-    accessibility_factor = (100.0 - df['accessibility_score']) / 100.0 
+    best_shelter = shelters.sort_values(by='distance_km').iloc[0]
+    report = evaluate_ecological_limits(best_shelter, hab_row['population'])
     
-    # Composite AHP Score Calculation
-    composite_score = (
-        normalized_w.get('hazard', 0.3) * hazard_factor +
-        normalized_w.get('exposure', 0.3) * exposure_factor +
-        normalized_w.get('vulnerability', 0.2) * vulnerability_factor +
-        normalized_w.get('accessibility', 0.2) * accessibility_factor
-    ) * 100.0
-    
-    df['composite_risk_score'] = np.round(composite_score, 2)
-    
-    # Automated Phased Relocation Priority Matrix
-    conditions = [
-        (df['composite_risk_score'] >= 75),
-        (df['composite_risk_score'] >= 50),
-        (df['composite_risk_score'] < 50)
-    ]
-    choices = [
-        'CRITICAL - Immediate Relocation (0–3 Months)', 
-        'MODERATE - Short-Term Action', 
-        'SAFE - Medium-Term Monitoring'
-    ]
-    df['risk_tier'] = np.select(conditions, choices, default='SAFE')
-    
-    return df
+    warnings = []
+    if report['headcount_deficit'] > 0:
+        warnings.append(f"Bed Deficit: {int(report['headcount_deficit'])} citizens exceed shelter headroom.")
+    if report['water_breached']:
+        warnings.append(f"Ecological Breach: Demands {report['water_needed']} L/day freshwater (exceeds supply).")
+    if report['road_breached']:
+        warnings.append(f"Bottleneck: Access road width ({best_shelter.get('road_width_m')}m) restricts evacuation convoys.")
+        
+    return {
+        "recommended_shelter": best_shelter['name'],
+        "distance_km": best_shelter['distance_km'],
+        "available_capacity": int(best_shelter['total_capacity'] - best_shelter['current_occupancy']),
+        "warnings": warnings,
+        "is_viable": len(warnings) == 0
+    }
