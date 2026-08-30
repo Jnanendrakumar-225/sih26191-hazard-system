@@ -9,6 +9,7 @@ from src.risk_engine import calculate_ahp_risk
 from src.carrying_capacity import evaluate_ecological_limits
 from src.spatial_analysis import compute_hazard_index
 from src.ml_zoning import assign_risk_zones
+from src.optimization import optimize_relocation_assignment
 
 st.set_page_config(page_title="Hazard-Based Red Zone & Relocation System", layout="wide")
 
@@ -101,69 +102,13 @@ st.divider()
 # 5. Execute Smart Routing FIRST so the map knows where to draw the lines
 crit_habitations = scored_df[scored_df['risk_tier'].str.contains("CRITICAL", na=False)].copy()
 relocation_plan = []
-assignment_lookup = {} # Dictionary to store who goes where for the map
+assignment_lookup = {}  # Dictionary to store who goes where for the map
 
 if len(crit_habitations) > 0:
-    # Real-time capacity tracker to prevent clashes
-    real_time_capacity = df_shelters.set_index('shelter_id')['total_capacity'] - df_shelters.set_index('shelter_id')['current_occupancy']
-    real_time_capacity = real_time_capacity.to_dict()
-    
-    # Sort by highest risk score first
-    crit_habitations = crit_habitations.sort_values(by='composite_risk_score', ascending=False)
-
-    for _, hab in crit_habitations.iterrows():
-        df_shelters['dist_km'] = (
-            ((df_shelters['latitude'] - hab['latitude'])**2 + 
-             (df_shelters['longitude'] - hab['longitude'])**2)**0.5 * 111.0
-        ).round(2)
-        
-        sorted_shelters = df_shelters.sort_values(by='dist_km')
-        assigned = False
-        
-        for _, shelter in sorted_shelters.iterrows():
-            current_headroom = real_time_capacity[shelter['shelter_id']]
-            
-            if current_headroom >= hab['population']:
-                # Carrying-capacity check: beds alone aren't enough — verify
-                # freshwater supply and road-access width can support the move.
-                eco = evaluate_ecological_limits(shelter, hab['population'])
-                if eco['water_breached'] or eco['road_breached']:
-                    continue  # bed space exists but the shelter can't sustain it — try the next one
-
-                real_time_capacity[shelter['shelter_id']] -= hab['population']
-                assignment_lookup[hab['name']] = shelter # Save for the map
-                
-                relocation_plan.append({
-                    "Origin Red Zone": hab['name'],
-                    "Evacuees": int(hab['population']),
-                    "Assigned Shelter": shelter['name'],
-                    "Distance (km)": shelter['dist_km'],
-                    "Status": "✅ Optimal (Beds, Water & Road Clear)"
-                })
-                assigned = True
-                break 
-                
-        if not assigned:
-            nearest = sorted_shelters.iloc[0]
-            eco = evaluate_ecological_limits(nearest, hab['population'])
-            deficit = int(eco['headcount_deficit'])
-            reasons = []
-            if deficit > 0:
-                reasons.append(f"Short {deficit} beds")
-            if eco['water_breached']:
-                reasons.append(f"needs {int(eco['water_needed'])}L/day water, supply insufficient")
-            if eco['road_breached']:
-                reasons.append("access road below 6m — convoy bottleneck")
-            reason_text = "; ".join(reasons) if reasons else "capacity constraints"
-            assignment_lookup[hab['name']] = nearest # Save for the map
-            
-            relocation_plan.append({
-                "Origin Red Zone": hab['name'],
-                "Evacuees": int(hab['population']),
-                "Assigned Shelter": nearest['name'],
-                "Distance (km)": nearest['dist_km'],
-                "Status": f"⚠️ OVERFLOW: {reason_text}"
-            })
+    # Globally optimal shelter assignment (Hungarian algorithm): minimizes
+    # TOTAL evacuation distance across all critical habitations at once,
+    # instead of each habitation greedily grabbing its own nearest shelter.
+    relocation_plan, assignment_lookup = optimize_relocation_assignment(crit_habitations, df_shelters)
 
 # 6. Interactive Layout: Analysis (Left) & Map (Right)
 analysis_col, map_col = st.columns([1, 1.2])
