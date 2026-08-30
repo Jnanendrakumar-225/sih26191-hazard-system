@@ -1,11 +1,9 @@
-habitation_id,name,latitude,longitude,population,children_population,elderly_population,hazard_score,accessibility_score,historical_floods
-H201,Pandu Port Ghat,26.172,91.7015,3400,620,480,94,30,7
-H202,Uzan Bazar Riverside,26.1932,91.758,2800,450,390,88,45,5
-H203,North Guwahati Island Ward,26.2085,91.724,4100,850,620,96,20,8
-H204,Kamakhyapuram Hill Foot,26.166,91.708,1950,310,220,78,40,4
-H205,Dispur Capital Sector,26.143,91.789,5200,720,610,32,90,1
-H206,Khanapara Foothills,26.118,91.821,1600,240,180,65,60,3
-H207,Boragaon Deepor Beel Basin,26.1285,91.685,3100,580,410,91,25,6
-H208,Noonmati Refinery Colony,26.189,91.802,2900,410,360,45,75,2
-H209,Amingaon Industrial Belt,26.197,91.678,2450,380,290,72,55,4
-H210,Jalukbari Transit Hub,26.151,91.661,3800,490,430,58,85,2
+name,latitude,longitude,population,children_population,elderly_population,accessibility_score,historical_floods,rainfall_intensity_mm_hr,elevation_m,distance_to_river_km,drainage_risk_score
+Habitation A,26.1800,91.7400,1200,220,140,65,8,280,52,1.2,80
+Habitation B,26.1900,91.7500,850,150,100,72,4,190,68,3.8,45
+Habitation C,26.1700,91.7300,1600,300,180,48,10,320,40,0.7,92
+Habitation D,26.2000,91.7600,950,120,110,80,2,150,85,6.5,25
+Habitation E,26.1750,91.7350,1400,280,160,55,9,310,45,0.9,88
+Habitation F,26.1850,91.7450,700,90,80,75,3,210,72,4.5,40
+Habitation G,26.1650,91.7250,1800,350,210,42,11,340,35,0.5,95
+Habitation H,26.2050,91.7650,620,70,60,88,1,120,92,8.0,15

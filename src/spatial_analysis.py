@@ -1,25 +1,197 @@
 import pandas as pd
 
-def compute_hazard_index(df: pd.DataFrame) -> pd.Series:
+
+FLOOD_HAZARD_WEIGHTS = {
+    "historical_floods": 0.30,
+    "rainfall_intensity_mm_hr": 0.25,
+    "elevation_m": 0.20,
+    "distance_to_river_km": 0.15,
+    "drainage_risk_score": 0.10,
+}
+
+
+def _normalize(
+    series: pd.Series,
+    inverse: bool = False,
+) -> pd.Series:
     """
-    Derives a hazard index from observable risk signals instead of trusting
-    a manually pre-assigned 'hazard_score' column.
+    Min-max normalize a numeric indicator to 0-100.
 
-    Uses historical flood frequency (a standard proxy in flood-risk modelling,
-    e.g. as used in India's CWC flood atlases) as the primary signal, scaled
-    to a 0-100 index.
-
-    NOTE for production: this is designed to be swapped for a real geospatial
-    hazard layer without changing the interface — e.g. inundation frequency
-    from JRC Global Surface Water, a DEM-based flood-extent model, or a
-    distance-to-drainage-network feature pulled via OSMnx. Any of those would
-    plug in here and feed the same downstream AHP risk_engine unchanged.
+    If inverse=True:
+    lower raw values become higher risk values.
     """
-    if 'historical_floods' not in df.columns or df['historical_floods'].max() == 0:
-        # No flood history available — fall back to the provided score rather
-        # than silently returning zero everywhere.
-        return df.get('hazard_score', pd.Series(0, index=df.index)).astype(float)
 
-    max_floods = df['historical_floods'].max()
-    hazard_index = (df['historical_floods'] / max_floods) * 100.0
-    return hazard_index.round(2)
+    values = pd.to_numeric(
+        series,
+        errors="coerce",
+    )
+
+    minimum = values.min()
+    maximum = values.max()
+
+    if (
+        pd.isna(minimum)
+        or pd.isna(maximum)
+    ):
+        return pd.Series(
+            0.0,
+            index=series.index,
+        )
+
+    if maximum == minimum:
+
+        return pd.Series(
+            0.0,
+            index=series.index,
+        )
+
+    normalized = (
+        (values - minimum)
+        /
+        (maximum - minimum)
+        * 100.0
+    )
+
+    if inverse:
+
+        normalized = (
+            100.0 - normalized
+        )
+
+    return normalized.fillna(0.0)
+
+
+def compute_flood_hazard_components(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Compute a transparent multi-indicator
+    flood hazard model.
+
+    Full indicator set:
+
+    1. Historical flood frequency
+    2. Rainfall intensity
+    3. Elevation
+    4. Distance to river
+    5. Drainage risk
+
+    Missing optional indicators are automatically
+    reweighted.
+
+    historical_floods is required for computed mode.
+    """
+
+    if "historical_floods" not in df.columns:
+
+        raise ValueError(
+            "Computed flood hazard requires "
+            "'historical_floods'."
+        )
+
+    components = pd.DataFrame(
+        index=df.index
+    )
+
+    active_weights = {}
+
+
+    for column, weight in (
+        FLOOD_HAZARD_WEIGHTS.items()
+    ):
+
+        if column in df.columns:
+
+            inverse = column in {
+                "elevation_m",
+                "distance_to_river_km",
+            }
+
+            components[column] = _normalize(
+                df[column],
+                inverse=inverse,
+            )
+
+            active_weights[column] = weight
+
+
+    if not active_weights:
+
+        raise ValueError(
+            "No usable flood-hazard indicators "
+            "were found."
+        )
+
+
+    weight_total = sum(
+        active_weights.values()
+    )
+
+
+    normalized_weights = {
+
+        column:
+        weight / weight_total
+
+        for column, weight
+        in active_weights.items()
+
+    }
+
+
+    for column, weight in (
+        normalized_weights.items()
+    ):
+
+        components[
+            f"{column}_contribution"
+        ] = (
+            components[column]
+            * weight
+        )
+
+
+    contribution_columns = [
+
+        f"{column}_contribution"
+
+        for column
+        in normalized_weights
+
+    ]
+
+
+    components["hazard_score"] = (
+
+        components[
+            contribution_columns
+        ]
+
+        .sum(axis=1)
+
+        .round(2)
+
+    )
+
+
+    components.attrs[
+        "active_weights"
+    ] = normalized_weights
+
+
+    return components
+
+
+def compute_hazard_index(
+    df: pd.DataFrame,
+) -> pd.Series:
+    """
+    Return the final 0-100
+    multi-indicator flood hazard score.
+    """
+
+    return (
+        compute_flood_hazard_components(
+            df
+        )["hazard_score"]
+    )
