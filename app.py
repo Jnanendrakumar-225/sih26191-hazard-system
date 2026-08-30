@@ -6,6 +6,9 @@ import requests
 from streamlit_folium import st_folium
 
 from src.risk_engine import calculate_ahp_risk
+from src.carrying_capacity import evaluate_ecological_limits
+from src.spatial_analysis import compute_hazard_index
+from src.ml_zoning import assign_risk_zones
 
 st.set_page_config(page_title="Hazard-Based Red Zone & Relocation System", layout="wide")
 
@@ -69,8 +72,22 @@ total_w = sum(weights.values())
 if total_w != 1.0 and total_w > 0:
     st.sidebar.warning(f"Total weights equal {total_w:.2f}. Normalizing to 1.0...")
 
+st.sidebar.markdown("---")
+use_computed_hazard = st.sidebar.checkbox(
+    "🧮 Compute hazard index from flood history (vs. static CSV value)",
+    value=True,
+    help="When on, hazard_score is derived from historical_floods instead of the pre-filled CSV column."
+)
+
 # 3. Compute Risk Model
+if use_computed_hazard:
+    df_habitations['hazard_score'] = compute_hazard_index(df_habitations)
+
 scored_df = calculate_ahp_risk(df_habitations, weights)
+
+# 3b. Cluster habitations into operational risk zones (KMeans)
+n_zones = st.sidebar.slider("Number of Evacuation Zones (KMeans)", 1, 5, 3)
+scored_df = assign_risk_zones(scored_df, n_clusters=n_zones)
 
 # 4. Display Key Metrics
 col1, col2, col3, col4 = st.columns(4)
@@ -107,6 +124,12 @@ if len(crit_habitations) > 0:
             current_headroom = real_time_capacity[shelter['shelter_id']]
             
             if current_headroom >= hab['population']:
+                # Carrying-capacity check: beds alone aren't enough — verify
+                # freshwater supply and road-access width can support the move.
+                eco = evaluate_ecological_limits(shelter, hab['population'])
+                if eco['water_breached'] or eco['road_breached']:
+                    continue  # bed space exists but the shelter can't sustain it — try the next one
+
                 real_time_capacity[shelter['shelter_id']] -= hab['population']
                 assignment_lookup[hab['name']] = shelter # Save for the map
                 
@@ -115,14 +138,23 @@ if len(crit_habitations) > 0:
                     "Evacuees": int(hab['population']),
                     "Assigned Shelter": shelter['name'],
                     "Distance (km)": shelter['dist_km'],
-                    "Status": "✅ Optimal (No Clash)"
+                    "Status": "✅ Optimal (Beds, Water & Road Clear)"
                 })
                 assigned = True
                 break 
                 
         if not assigned:
             nearest = sorted_shelters.iloc[0]
-            deficit = int(hab['population'] - real_time_capacity[nearest['shelter_id']])
+            eco = evaluate_ecological_limits(nearest, hab['population'])
+            deficit = int(eco['headcount_deficit'])
+            reasons = []
+            if deficit > 0:
+                reasons.append(f"Short {deficit} beds")
+            if eco['water_breached']:
+                reasons.append(f"needs {int(eco['water_needed'])}L/day water, supply insufficient")
+            if eco['road_breached']:
+                reasons.append("access road below 6m — convoy bottleneck")
+            reason_text = "; ".join(reasons) if reasons else "capacity constraints"
             assignment_lookup[hab['name']] = nearest # Save for the map
             
             relocation_plan.append({
@@ -130,7 +162,7 @@ if len(crit_habitations) > 0:
                 "Evacuees": int(hab['population']),
                 "Assigned Shelter": nearest['name'],
                 "Distance (km)": nearest['dist_km'],
-                "Status": f"⚠️ OVERFLOW: Short {deficit} beds!"
+                "Status": f"⚠️ OVERFLOW: {reason_text}"
             })
 
 # 6. Interactive Layout: Analysis (Left) & Map (Right)
@@ -145,9 +177,10 @@ with analysis_col:
     st.markdown(f"**Composite Risk Score:** `{sel_hab['composite_risk_score']} / 100`")
     
     with st.expander("📊 Why did it receive this score?", expanded=True):
-        st.write(f"- **Hazard Intensity:** {sel_hab['hazard_score']}")
+        st.write(f"- **Hazard Intensity:** {sel_hab['hazard_score']}" + (" *(computed from flood history)*" if use_computed_hazard else " *(static CSV value)*"))
         st.write(f"- **Population Exposure:** {sel_hab['population']} citizens total")
         st.write(f"- **Vulnerable Group Ratio:** {int(sel_hab['children_population'] + sel_hab['elderly_population'])} dependents")
+        st.write(f"- **Evacuation Zone (KMeans cluster):** {sel_hab['risk_zone']}")
 
     if "CRITICAL" in sel_hab['risk_tier'] and sel_hab['name'] in assignment_lookup:
         target = assignment_lookup[sel_hab['name']]
@@ -170,7 +203,7 @@ with map_col:
         folium.Circle(
             location=[row['latitude'], row['longitude']],
             radius=400 + (row['population'] * 0.15), 
-            popup=f"<b>{row['name']}</b><br>Score: {row['composite_risk_score']}<br>Class: {row['risk_tier']}",
+            popup=f"<b>{row['name']}</b><br>Score: {row['composite_risk_score']}<br>Class: {row['risk_tier']}<br>Zone: {row['risk_zone']}",
             color=color_map.get(row['risk_tier'], 'gray'),
             fill=True,
             fill_opacity=0.5

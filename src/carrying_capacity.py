@@ -1,5 +1,29 @@
 import pandas as pd
 
+WATER_LITERS_PER_PERSON_DAY = 30.0   # standard emergency-shelter ration
+MIN_ROAD_WIDTH_M = 6.0               # minimum width for evacuation convoys
+
+def evaluate_ecological_limits(shelter: pd.Series, incoming_population: float) -> dict:
+    """
+    Single-shelter carrying capacity check used by relocation.py when picking
+    the nearest safe zone for one habitation. Checks bed headroom, freshwater
+    supply, and road-access width against the incoming population.
+    """
+    headroom = shelter['total_capacity'] - shelter['current_occupancy']
+    headcount_deficit = max(0.0, incoming_population - headroom)
+
+    water_needed = round(incoming_population * WATER_LITERS_PER_PERSON_DAY, 1)
+    water_breached = shelter['freshwater_liters_day'] < water_needed
+
+    road_breached = shelter.get('road_width_m', MIN_ROAD_WIDTH_M) < MIN_ROAD_WIDTH_M
+
+    return {
+        'headcount_deficit': headcount_deficit,
+        'water_needed': water_needed,
+        'water_breached': bool(water_breached),
+        'road_breached': bool(road_breached),
+    }
+
 def evaluate_carrying_capacity(shelter_df, incoming_population):
     """
     Evaluates if target shelters can absorb displaced population based on 
