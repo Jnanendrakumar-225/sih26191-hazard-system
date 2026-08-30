@@ -22,7 +22,7 @@ A **geospatial, AI-driven decision-support platform** for District Emergency Ope
    - Ensure no shelter gets double-booked
    - Flag overflow with specific reasons (beds/water/road bottlenecks)
    - Cluster habitations into operational evacuation zones (KMeans)
-   - Generate downloadable SDMA action dispatch
+   - Generate a print-ready SDMA action dispatch
 
 4. **Provides explainable AI** — Every risk score is transparent and actionable:
    - Hazard score breakdown: historical floods + rainfall + elevation + river proximity + drainage
@@ -132,7 +132,7 @@ OR provide pre-computed `hazard_score` column.
 - Searchable habitation analyzer
 
 **Exportable:**
-- SDMA Action Plan (TXT) — official government dispatch
+- SDMA Action Plan (print-friendly TXT dispatch) — government-style relocation briefing
 - Evacuation summary tables (embeddable in dashboard)
 
 ---
@@ -175,7 +175,7 @@ Specify 1-5 zones via sidebar. System clusters habitations by:
 5. **Capacity Assessment** → Check beds, water, roads for each shelter
 6. **Optimization** → Assign critical habitations to shelters (minimize distance, respect constraints)
 7. **Visualization** → Interactive maps, risk breakdowns, routing
-8. **Export** → SDMA action plan (downloadable TXT)
+8. **Export** → government-style SDMA action plan (downloadable TXT)
 
 ---
 

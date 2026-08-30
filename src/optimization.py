@@ -55,6 +55,7 @@ def optimize_relocation_assignment(
     """
     shelters = shelters_df.set_index('shelter_id', drop=False).copy()
     capacity_left = (shelters['total_capacity'] - shelters['current_occupancy']).to_dict()
+    water_left = shelters['freshwater_liters_day'].to_dict()
     remaining = crit_habitations.reset_index(drop=True).copy()
     relocation_plan, assignment_lookup = [], {}
 
@@ -71,9 +72,16 @@ def optimize_relocation_assignment(
             for j, sid in enumerate(shelter_ids):
                 shelter = shelters.loc[sid]
                 dist_km = _haversine_km(hab['latitude'], hab['longitude'], shelter['latitude'], shelter['longitude'])
+                water_required_liters = float(hab['population']) * 30.0
                 eco = evaluate_ecological_limits(shelter, hab['population'])
+                dynamic_water_breached = water_left.get(sid, 0.0) < water_required_liters
+                eco['water_breached'] = dynamic_water_breached
                 eco_cache[(i, sid)] = (dist_km, eco)
-                if capacity_left[sid] >= hab['population'] and not eco['water_breached'] and not eco['road_breached']:
+                if (
+                    capacity_left[sid] >= hab['population']
+                    and not dynamic_water_breached
+                    and not eco['road_breached']
+                ):
                     cost[i, j] = dist_km
 
         row_idx, col_idx = linear_sum_assignment(cost)
@@ -83,8 +91,16 @@ def optimize_relocation_assignment(
                 continue
             hab = remaining.iloc[r]
             sid = shelter_ids[c]
-            dist_km, _ = eco_cache[(r, sid)]
-            capacity_left[sid] -= hab['population']
+            dist_km, eco = eco_cache[(r, sid)]
+            water_required_liters = float(hab['population']) * 30.0
+            if capacity_left[sid] < hab['population']:
+                continue
+            if water_left.get(sid, 0.0) < water_required_liters:
+                continue
+            if eco['road_breached']:
+                continue
+            capacity_left[sid] -= int(hab['population'])
+            water_left[sid] -= water_required_liters
             shelter_record = shelters.loc[sid].copy()
             shelter_record['dist_km'] = round(float(dist_km), 2)
             assignment_lookup[hab['name']] = shelter_record
@@ -108,10 +124,13 @@ def optimize_relocation_assignment(
             if best_dist is None or dist_km < best_dist:
                 best_sid, best_dist = sid, dist_km
                 best_eco = evaluate_ecological_limits(shelter, hab['population'])
+                water_required_liters = float(hab['population']) * 30.0
+                best_eco['water_breached'] = water_left.get(sid, 0.0) < water_required_liters
         deficit = int(best_eco['headcount_deficit'])
         reasons = []
         if deficit > 0: reasons.append(f"Short {deficit} beds")
-        if best_eco['water_breached']: reasons.append(f"needs {int(best_eco['water_needed'])}L/day water, supply insufficient")
+        if best_eco['water_breached']:
+            reasons.append(f"needs {int(float(hab['population']) * 30.0)}L/day water, supply insufficient")
         if best_eco['road_breached']: reasons.append("access road below 6m — convoy bottleneck")
         reason_text = "; ".join(reasons) if reasons else "capacity constraints"
         shelter_record = shelters.loc[best_sid].copy()

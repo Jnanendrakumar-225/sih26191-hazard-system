@@ -6,9 +6,27 @@ import streamlit as st
 from streamlit_folium import st_folium
 
 from src.risk_engine import calculate_ahp_risk
-from src.spatial_analysis import compute_flood_hazard_components
+from src.spatial_analysis import compute_hazard_components
 from src.ml_zoning import assign_risk_zones
 from src.optimization import optimize_relocation_assignment
+
+
+def validate_numeric_columns(frame: pd.DataFrame, columns: list[str], label: str) -> None:
+    """Coerce numeric columns and fail fast on invalid values."""
+    bad_columns = []
+    for column in columns:
+        if column not in frame.columns:
+            continue
+        converted = pd.to_numeric(frame[column], errors="coerce")
+        if converted.isna().any():
+            bad_columns.append(column)
+        frame[column] = converted
+
+    if bad_columns:
+        raise ValueError(
+            f"{label} contains non-numeric values in: {', '.join(bad_columns)}. "
+            "Please convert them to numeric values before uploading."
+        )
 
 st.set_page_config(
     page_title="Hazard-Based Red Zone & Relocation System",
@@ -126,16 +144,26 @@ if uploaded_file is not None:
             )
             st.stop()
 
-        # Validate data types and ranges
         try:
-            pd.to_numeric(df_habitations["latitude"], errors="coerce").fillna(0)
-            pd.to_numeric(df_habitations["longitude"], errors="coerce").fillna(0)
-            pd.to_numeric(df_habitations["population"], errors="coerce").fillna(0)
-            pd.to_numeric(df_habitations["accessibility_score"], errors="coerce").fillna(0)
-        except Exception:
-            st.sidebar.error(
-                "❌ **Validation Failed:** Numeric columns contain non-numeric values."
+            validate_numeric_columns(
+                df_habitations,
+                [
+                    "latitude",
+                    "longitude",
+                    "population",
+                    "children_population",
+                    "elderly_population",
+                    "accessibility_score",
+                    "historical_floods",
+                    "rainfall_intensity_mm_hr",
+                    "elevation_m",
+                    "distance_to_river_km",
+                    "drainage_risk_score",
+                ],
+                "Uploaded habitation dataset",
             )
+        except ValueError as error:
+            st.sidebar.error(f"❌ **Validation Failed:** {str(error)}")
             st.stop()
 
         hazard_columns = {
@@ -248,10 +276,17 @@ if abs(total_weight - 1.0) > 0.001:
 
 st.sidebar.markdown("---")
 
+hazard_model = st.sidebar.selectbox(
+    "Hazard Model",
+    ["Flood", "Cyclone"],
+    index=0,
+    help="Choose the disaster profile used to compute the hazard score. Cyclone mode uses rainfall, drainage, flood history, and elevation context."
+)
+
 use_computed_hazard = st.sidebar.checkbox(
-    "🧮 Compute Multi-Indicator Flood Hazard Index",
+    "🧮 Compute Multi-Indicator Hazard Index",
     value=True,
-    help="Uses historical_floods, rainfall, elevation, river proximity, and drainage risk to compute a composite hazard score"
+    help="Uses the selected hazard model to compute a composite risk score from the available geospatial indicators"
 )
 
 hazard_components = None
@@ -259,8 +294,9 @@ hazard_components = None
 if use_computed_hazard:
     try:
         with st.sidebar.status("Computing hazard index...", expanded=False):
-            hazard_components = compute_flood_hazard_components(
-                df_habitations
+            hazard_components = compute_hazard_components(
+                df_habitations,
+                hazard_type=hazard_model.lower(),
             )
 
             df_habitations["hazard_score"] = (
@@ -268,19 +304,19 @@ if use_computed_hazard:
             )
 
         st.sidebar.success(
-            "✅ Multi-indicator flood model active | Weights: Historical(30%) + Rainfall(25%) + Elevation(20%) + River Proximity(15%) + Drainage(10%)"
+            f"✅ {hazard_model} model active | Hazard score now uses the selected indicators and weights for scenario planning."
         )
 
     except ValueError as error:
         if "hazard_score" in df_habitations.columns:
             st.sidebar.warning(
-                f"⚠️ Could not compute hazard index: {str(error)}\n\nUsing existing hazard_score column instead."
+                f"⚠️ Could not compute {hazard_model.lower()} hazard index: {str(error)}\n\nUsing existing hazard_score column instead."
             )
             use_computed_hazard = False
         else:
             st.sidebar.error(
                 f"❌ **Hazard Calculation Failed:** {str(error)}\n\n"
-                "Please ensure your data includes 'historical_floods' or provide a 'hazard_score' column."
+                "Please ensure your data includes the required indicators for the selected hazard model, or provide a 'hazard_score' column."
             )
             st.stop()
     except Exception as error:
@@ -793,12 +829,13 @@ if st.button("📄 Generate SDMA Action Plan"):
         "====================================================\n"
         "RISK ASSESSMENT METHODOLOGY\n"
         "====================================================\n\n"
-        "Flood hazard is assessed using:\n"
-        "- Historical flood frequency\n"
+        f"Selected hazard profile: {hazard_model} scenario\n"
+        "Composite hazard inputs considered:\n"
+        "- Historical hazard exposure\n"
         "- Rainfall intensity\n"
         "- Elevation risk\n"
-        "- River proximity\n"
-        "- Drainage risk\n\n"
+        "- River / drainage context\n"
+        "- Operational vulnerability\n\n"
         "Overall relocation priority considers:\n"
         "- Hazard intensity\n"
         "- Population exposure\n"
@@ -825,7 +862,7 @@ if st.button("📄 Generate SDMA Action Plan"):
     )
 
     st.download_button(
-        label="📥 Download SDMA Action Plan",
+        label="📥 Download Government Dispatch (.txt)",
         data=action_text,
         file_name="SDMA_Relocation_Action_Plan.txt",
         mime="text/plain"
