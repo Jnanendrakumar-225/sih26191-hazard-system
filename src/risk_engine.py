@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from typing import Dict
 
 
 def _normalize_to_100(series: pd.Series) -> pd.Series:
@@ -8,6 +9,12 @@ def _normalize_to_100(series: pd.Series) -> pd.Series:
 
     If all values are identical, returns 50 because there is
     no relative difference between habitations.
+    
+    Args:
+        series: Numeric pandas Series to normalize
+    
+    Returns:
+        Normalized Series with values in range [0, 100]
     """
     values = pd.to_numeric(series, errors="coerce").fillna(0)
 
@@ -20,25 +27,39 @@ def _normalize_to_100(series: pd.Series) -> pd.Series:
     return ((values - minimum) / (maximum - minimum)) * 100.0
 
 
-def calculate_ahp_risk(df, weights):
+def calculate_ahp_risk(df: pd.DataFrame, weights: Dict[str, float]) -> pd.DataFrame:
     """
-    Computes overall habitation risk using four MCDA/AHP criteria:
-
-    1. Hazard intensity
-    2. Population exposure
-    3. Population vulnerability
-    4. Evacuation accessibility
-
-    The supplied weights are automatically normalized to 1.0.
-
-    Returns the original dataframe with:
-        - hazard_factor
-        - exposure_factor
-        - vulnerability_factor
-        - accessibility_factor
-        - weighted contribution columns
-        - composite_risk_score
-        - risk_tier
+    Computes overall habitation risk using Multi-Criteria Decision Analysis (MCDA).
+    
+    Combines four criteria:
+    1. Hazard intensity (natural hazard exposure)
+    2. Population exposure (total population)
+    3. Population vulnerability (children + elderly proportion)
+    4. Evacuation accessibility (ease of egress)
+    
+    Weights are automatically normalized to sum to 1.0.
+    
+    Args:
+        df: DataFrame with columns: hazard_score, population, children_population,
+                                   elderly_population, accessibility_score
+        weights: Dict with keys 'hazard', 'exposure', 'vulnerability', 'accessibility'
+                Values should be 0-1 (will be normalized to 1.0)
+    
+    Returns:
+        Original DataFrame with added columns:
+            - hazard_factor: Normalized hazard intensity (0-100)
+            - exposure_factor: Population exposure (0-100)
+            - vulnerability_factor: Proportion of vulnerable population (0-100)
+            - accessibility_factor: Evacuation difficulty (0-100)
+            - hazard_contribution: Weighted contribution to risk score
+            - exposure_contribution: Weighted contribution to risk score
+            - vulnerability_contribution: Weighted contribution to risk score
+            - accessibility_contribution: Weighted contribution to risk score
+            - composite_risk_score: Final AHP risk score (0-100)
+            - risk_tier: Classification (CRITICAL/MODERATE/LOW)
+    
+    Raises:
+        ValueError: If required columns are missing
     """
 
     df = df.copy()

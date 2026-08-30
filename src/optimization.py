@@ -1,19 +1,58 @@
 import numpy as np
 import pandas as pd
+from typing import Tuple, Dict, List, Any
 from scipy.optimize import linear_sum_assignment
 
 from src.carrying_capacity import evaluate_ecological_limits
 
 PENALTY = 1e6
 
-def _haversine_km(lat1, lon1, lat2, lon2):
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Calculate great-circle distance between two geographic points using Haversine formula.
+    
+    Args:
+        lat1, lon1: First point coordinates (decimal degrees)
+        lat2, lon2: Second point coordinates (decimal degrees)
+    
+    Returns:
+        Distance in kilometers
+    """
     R = 6371.0
     lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
     dlat, dlon = lat2 - lat1, lon2 - lon1
     a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
     return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
-def optimize_relocation_assignment(crit_habitations: pd.DataFrame, shelters_df: pd.DataFrame):
+def optimize_relocation_assignment(
+    crit_habitations: pd.DataFrame, 
+    shelters_df: pd.DataFrame
+) -> Tuple[List[Dict[str, Any]], Dict[str, pd.Series]]:
+    """
+    Assign critical habitations to shelters minimizing evacuation distance while 
+    respecting carrying capacity constraints (beds, water, road width).
+    
+    Uses two-phase approach:
+    1. Global optimization via Hungarian algorithm with penalty-based constraints
+    2. Greedy best-effort assignment for remaining habitations with failure reason reporting
+    
+    Args:
+        crit_habitations: DataFrame of habitations requiring evacuation
+                         Must include: name, latitude, longitude, population
+        shelters_df: DataFrame of available shelters
+                    Must include: shelter_id, name, latitude, longitude, total_capacity,
+                                 current_occupancy, freshwater_liters_day, road_width_m
+    
+    Returns:
+        Tuple of:
+        - relocation_plan: List[Dict] with keys:
+            * "Origin Red Zone": habitation name
+            * "Evacuees": population
+            * "Assigned Shelter": shelter name
+            * "Distance (km)": haversine distance
+            * "Status": assignment status (✅ Optimal or ⚠️ OVERFLOW)
+        - assignment_lookup: Dict mapping habitation name -> shelter record
+    """
     shelters = shelters_df.set_index('shelter_id', drop=False).copy()
     capacity_left = (shelters['total_capacity'] - shelters['current_occupancy']).to_dict()
     remaining = crit_habitations.reset_index(drop=True).copy()

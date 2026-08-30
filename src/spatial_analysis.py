@@ -1,4 +1,5 @@
 import pandas as pd
+from typing import Optional
 
 
 FLOOD_HAZARD_WEIGHTS = {
@@ -15,10 +16,17 @@ def _normalize(
     inverse: bool = False,
 ) -> pd.Series:
     """
-    Min-max normalize a numeric indicator to 0-100.
-
-    If inverse=True:
-    lower raw values become higher risk values.
+    Min-max normalize a numeric indicator to 0-100 scale.
+    
+    If inverse=True, lower raw values become higher risk scores.
+    Useful for elevation (lower = more risk) and distance (closer = more risk).
+    
+    Args:
+        series: Numeric pandas Series to normalize
+        inverse: If True, reverses scale (100 - normalized value)
+    
+    Returns:
+        Normalized Series with values in range [0, 100]
     """
 
     values = pd.to_numeric(
@@ -65,21 +73,31 @@ def compute_flood_hazard_components(
     df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Compute a transparent multi-indicator
-    flood hazard model.
-
-    Full indicator set:
-
-    1. Historical flood frequency
-    2. Rainfall intensity
-    3. Elevation
-    4. Distance to river
-    5. Drainage risk
-
-    Missing optional indicators are automatically
-    reweighted.
-
-    historical_floods is required for computed mode.
+    Compute a transparent multi-indicator flood hazard model.
+    
+    Combines up to 5 indicators:
+    1. Historical flood frequency (30% weight)
+    2. Rainfall intensity (25%)
+    3. Elevation (20%, inverse: low elevation = high risk)
+    4. Distance to river (15%, inverse: close = high risk)
+    5. Drainage risk (10%)
+    
+    Missing indicators are automatically reweighted.
+    Required: At least 'historical_floods' column.
+    
+    Args:
+        df: DataFrame with numeric habitation data.
+            Required: 'historical_floods' column
+            Optional: 'rainfall_intensity_mm_hr', 'elevation_m', 
+                     'distance_to_river_km', 'drainage_risk_score'
+    
+    Returns:
+        DataFrame with added columns:
+            - hazard_score: Composite hazard index (0-100)
+            - {indicator}_contribution: Contribution of each component
+    
+    Raises:
+        ValueError: If 'historical_floods' column is missing
     """
 
     if "historical_floods" not in df.columns:
